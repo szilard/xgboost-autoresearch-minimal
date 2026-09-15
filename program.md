@@ -69,10 +69,9 @@ You are expected to actively search the web and read external resources througho
 
 **The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
 
-
 ## Feature engineering
 
-**Important:** Keep all the feature engineering/data transformations in the `prepare(df)` function in `train.py`. This is because during the post-hoc ground gruth evaluation, the human must be able to run exactly the same transformations to ensure consistency between training and evaluation data (the same `prepare(df)` function will be called by `check_ground_truth.py`). Do not create any helper functions etc. outside `prepare(df)`, add ALL the feature engineering inside the `prepare(df)` function. The code should be like this:
+**Important:** Keep all the feature engineering/data transformations in the `prepare(df)` function in `train.py`. This is because during the post-hoc ground truth evaluation, the human must be able to run exactly the same transformations to ensure consistency between training and evaluation data (the same `prepare(df)` function will be called by `check_ground_truth.py`). The code should be like this:
 ```
 train = pd.read_csv(...)
 
@@ -89,10 +88,36 @@ def prepare(df):
 
 X_train, y_train = prepare(train)
 ```
-All the additional feauture engineering should be done inside the `prepare(df)` function.
 
+**`prepare(df)` must compute each row's features from that row alone, plus lookups fitted on `train`.** `prepare(df)` is called here on the 100k-row training slice, and again during the post-hoc ground truth evaluation on separate files that are 10x larger (1M rows each). Any feature that aggregates over `df` itself therefore means something completely different in the two cases — and your CV score cannot show you this, because in CV the features are built once on the full training frame before it is split into folds.
 
-If thinking about using counts as derived features, consider the fact that the data has been balanced by undersampling the non-fraud cases, therefore counts may not reflect the true distribution in the original dataset. Therefore it is best to avoid using such features.
+Concretely, inside `prepare(df)` do NOT:
+
+- count rows of `df`: `df.groupby(...).transform("size")`, `.transform("count")`, `value_counts()`, or any frequency derived from them. These scale directly with the number of rows you are given, so a value of 5 in training becomes ~50 at evaluation time, outside anything the model was trained on.
+- aggregate over `df`: `df.groupby(...).transform("mean"/"median"/"min"/"max"/"std")`, or any other statistic computed from the rows of `df`.
+- normalise, standardise, rank, or quantile-bin using statistics of `df` (its mean, std, size, min/max, quantiles).
+- derive categorical levels from `df`, e.g. `pd.factorize(df[col])` or `categories=sorted(df[col].unique())`.
+
+Group statistics and lookup tables are useful and entirely allowed — just **fit them on `train` at module level, above `prepare`, and only look them up inside `prepare(df)`**, exactly the way `cat_levels` already does. Code that *fits* a lookup table on `train` is the one thing that belongs outside `prepare(df)`. For example:
+
+```
+# fitted once, on train
+route = train["Origin"] + "-" + train["Dest"]
+route_median_deptime = train["DepTime"].groupby(route).median()
+
+def prepare(df):
+    ...
+    # looked up per row: the same number in training and in evaluation
+    X["DepTimeVsRouteMedian"] = df["DepTime"] - (
+        df["Origin"] + "-" + df["Dest"]
+    ).map(route_median_deptime)
+```
+
+The difference matters: the forbidden version summarises *whichever rows you happen to be handed*, the correct version applies *numbers learned from the training data*. Only the second one still means the same thing at evaluation time. Keys that never appear in `train` map to NaN, which XGBoost handles natively.
+
+Quick test for any feature you add: **if you ran `prepare()` on a random half of the training data instead of all of it, would this column change for a given row?** If yes, the feature is broken — drop it, or refit it on `train` and look it up. A feature that fails this test can raise your CV AUC while making the model strictly worse on unseen data, and you will not notice from the CV number alone.
+
+Counts of rows in particular are not usable as features in this setup, in any form. Besides the problem above, the data has been balanced by undersampling, so counts do not reflect the true frequencies in the original dataset either.
 
 
 
