@@ -18,7 +18,7 @@ The repo is deliberately kept small and only really has three files that matter:
 ```bash
 
 # 1. Install dependencies
-pip install pandas xgboost scikit-learn polars
+pip install pandas xgboost scikit-learn matplotlib --break-system-packages
 
 # 2. Download data
 python3 prepare.py
