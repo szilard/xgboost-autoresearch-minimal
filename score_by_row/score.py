@@ -16,9 +16,8 @@ subsets = [
 ]
 
 for label, test_subset in subsets:
-    X_test, y_test = prepare(test_subset)
-
     t0 = time.time()
+    X_test, y_test = prepare(test_subset)
     y_prob = model.predict_proba(X_test)[:, 1]
     test_auc = roc_auc_score(y_test, y_prob)
     print(f"{label}: test time {time.time() - t0:.3f}s, test AUC {test_auc:.4f}")
