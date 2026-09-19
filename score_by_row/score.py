@@ -43,3 +43,18 @@ for thread_label, nthread in [("all cores", -1), ("1 thread", 1)]:
         y_test[i] = y_row[0]
     test_auc = roc_auc_score(y_test, y_prob)
     print(f"{label}: test time {time.time() - t0:.3f}s, test AUC {test_auc:.4f}")
+
+
+# first 1k rows: prepare() per row, then one batched predict on the assembled frame
+model.set_params(n_jobs=-1)
+model.get_booster().set_param({"nthread": -1})
+
+label = "first 1k rows, per-row prepare + batch predict"
+
+t0 = time.time()
+prepared = [prepare(test_1k.iloc[[i]]) for i in range(len(test_1k))]
+X_test = pd.concat([X_row for X_row, _ in prepared])
+y_test = np.concatenate([y_row for _, y_row in prepared])
+y_prob = model.predict_proba(X_test)[:, 1]
+test_auc = roc_auc_score(y_test, y_prob)
+print(f"{label}: test time {time.time() - t0:.3f}s, test AUC {test_auc:.4f}")
