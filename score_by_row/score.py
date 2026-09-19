@@ -58,3 +58,27 @@ y_test = np.concatenate([y_row for _, y_row in prepared])
 y_prob = model.predict_proba(X_test)[:, 1]
 test_auc = roc_auc_score(y_test, y_prob)
 print(f"{label}: test time {time.time() - t0:.3f}s, test AUC {test_auc:.4f}")
+
+
+# same per-row work, faster: prepare()'s six pd.Categorical calls per row are
+# the cost, so map each row's levels to codes by hand and build the frame once
+code_maps = {col: {lvl: code for code, lvl in enumerate(cat_levels[col])} for col in cat_cols}
+
+def prepare_row(row):
+    values = [row[col] for col in num_cols] + [code_maps[col].get(row[col], -1) for col in cat_cols]
+    return values, 1 if row[target] == "Y" else 0
+
+label = "first 1k rows, fast per-row prepare + batch predict"
+
+t0 = time.time()
+rows = [prepare_row(t._asdict()) for t in test_1k.itertuples(index=False)]
+X_test = pd.DataFrame([values for values, _ in rows], columns=num_cols + cat_cols)
+for col in cat_cols:
+    X_test[col] = pd.Categorical.from_codes(X_test[col].astype(int), categories=cat_levels[col])
+y_test = np.array([y for _, y in rows])
+y_prob = model.predict_proba(X_test)[:, 1]
+test_auc = roc_auc_score(y_test, y_prob)
+print(f"{label}: test time {time.time() - t0:.3f}s, test AUC {test_auc:.4f}")
+
+# the shortcut must reproduce prepare() exactly
+assert np.array_equal(y_prob, model.predict_proba(prepare(test_1k)[0])[:, 1])
