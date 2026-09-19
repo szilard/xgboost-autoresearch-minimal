@@ -63,7 +63,7 @@ print(f"{label}: test time {time.time() - t0:.3f}s, test AUC {test_auc:.4f}")
 # left as it is the only lever is calling it in parallel.
 import multiprocessing as mp
 
-n_workers = 8
+n_workers = 4
 per_worker = -(-len(test_1k) // n_workers)
 bounds = [(i, min(i + per_worker, len(test_1k))) for i in range(0, len(test_1k), per_worker)]
 
