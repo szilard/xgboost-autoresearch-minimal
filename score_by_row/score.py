@@ -60,25 +60,29 @@ test_auc = roc_auc_score(y_test, y_prob)
 print(f"{label}: test time {time.time() - t0:.3f}s, test AUC {test_auc:.4f}")
 
 
-# same per-row work, faster: prepare()'s six pd.Categorical calls per row are
-# the cost, so map each row's levels to codes by hand and build the frame once
-code_maps = {col: {lvl: code for code, lvl in enumerate(cat_levels[col])} for col in cat_cols}
+# prepare() costs ~2.5ms per call whatever the frame size, so with the function
+# left as it is the only lever is calling it in parallel.
+import multiprocessing as mp
 
-def prepare_row(row):
-    values = [row[col] for col in num_cols] + [code_maps[col].get(row[col], -1) for col in cat_cols]
-    return values, 1 if row[target] == "Y" else 0
+n_workers = 8
+per_worker = -(-len(test_1k) // n_workers)
+bounds = [(i, min(i + per_worker, len(test_1k))) for i in range(0, len(test_1k), per_worker)]
 
-label = "first 1k rows, fast per-row prepare + batch predict"
+def prepare_slice(lo_hi):
+    lo, hi = lo_hi
+    out = [prepare(test_1k.iloc[[i]]) for i in range(lo, hi)]
+    return pd.concat([X for X, _ in out]), np.concatenate([y for _, y in out])
+
+label = f"first 1k rows, per-row prepare in {n_workers} processes + batch predict"
 
 t0 = time.time()
-rows = [prepare_row(t._asdict()) for t in test_1k.itertuples(index=False)]
-X_test = pd.DataFrame([values for values, _ in rows], columns=num_cols + cat_cols)
-for col in cat_cols:
-    X_test[col] = pd.Categorical.from_codes(X_test[col].astype(int), categories=cat_levels[col])
-y_test = np.array([y for _, y in rows])
+# fork so the workers inherit prepare() and its cat_levels as they stand
+with mp.get_context("fork").Pool(n_workers) as pool:
+    out = pool.map(prepare_slice, bounds)
+X_test = pd.concat([X for X, _ in out])
+y_test = np.concatenate([y for _, y in out])
 y_prob = model.predict_proba(X_test)[:, 1]
 test_auc = roc_auc_score(y_test, y_prob)
 print(f"{label}: test time {time.time() - t0:.3f}s, test AUC {test_auc:.4f}")
 
-# the shortcut must reproduce prepare() exactly
 assert np.array_equal(y_prob, model.predict_proba(prepare(test_1k)[0])[:, 1])
